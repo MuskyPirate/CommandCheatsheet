@@ -1,0 +1,9 @@
+Hash Identification
+
+```bash
+$1$ : MD5
+$2a$ : Blowfish
+$2y$ : Blowfish, with correct handling of 8 bit characters
+$5$  : SHA256
+$6$  : SHA512
+```
